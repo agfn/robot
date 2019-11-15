@@ -37,7 +37,7 @@ sudo apt install libgpiod-dev
 #### 测试 
 
 发送端  
-[测试代码](https://github.com/Lavender-Tree/robot/raspberrypi/serial_comm.c)
+[测试代码](https://github.com/Lavender-Tree/robot/blob/master/raspberrypi/serial_comm.c)
 
 接收端  
 ```sh
