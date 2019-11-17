@@ -58,7 +58,7 @@ BOOL WINAPI CtrlCHandler(DWORD signal) {
 
 	if (signal == CTRL_C_EVENT)
 	{
-		WaitForSingleObject(w_consol_event, 1000 * 3);
+		WaitForSingleObject(w_consol_event, 1000);
 		printf("[CLOSE] %s\n", dev);
 		CloseHandle(serial);
 		CloseHandle(w_consol_event);
@@ -71,7 +71,7 @@ BOOL WINAPI CtrlCHandler(DWORD signal) {
 
 int main()
 {
-	serial = CreateFileA(dev, GENERIC_ALL, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	serial = CreateFileA(dev, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	err_code (serial == INVALID_HANDLE_VALUE, "[OPEN] fail to open %s %d\n", dev);
 
 	// register ctrl-c handler
@@ -84,18 +84,28 @@ int main()
 	err_code(w_consol_event == INVALID_HANDLE_VALUE, "[CREATE EVENT] fail %d\n");
 	SetEvent(w_consol_event);
 
+
+	// 
+	COMMTIMEOUTS comm_t_o = {-1, 0, 0x12c, 0, 0x12c};
+
+	SetCommTimeouts(serial, &comm_t_o);
+
+	SetCommMask(serial, EV_RXCHAR | EV_RXFLAG);
+
+
 	// set buffer size
-	SetupComm(serial, 0x400, 0x400);
+	// SetupComm(serial, 0x400, 0x400);
 
 	// set communicate status
 	DCB dcb;
 	GetCommState(serial, &dcb);
-	
-	dcb.BaudRate = 9600;		// HC-02 default baud
-	dcb.EofChar = 1;			// TTL default stop bit
-	dcb.ByteSize = 8;
-	dcb.fParity = 1;
-	dcb.Parity = 0;
+
+	dcb.DCBlength = sizeof(dcb);
+	dcb.BaudRate = CBR_9600;	// HC-02 default baud
+	dcb.ByteSize = 8;			// 8 bit / byte
+	dcb.fParity = FALSE;		
+	dcb.Parity = NOPARITY;		// no  parity
+	dcb.StopBits = ONESTOPBIT;	// 1 bit 
 
 	SetCommState(serial, &dcb);
 
