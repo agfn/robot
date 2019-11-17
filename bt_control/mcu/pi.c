@@ -178,14 +178,13 @@ void set_direction(int direc)
 // handle loop
 void hanlde_recv_loop()
 {
-    SET_M(M1, M_STOP)
     unsigned char op = 0;
     int n_read = 0;
     while ( (n_read = read(serial, &op, 1)) >= 0)
     {
         if (n_read == 1 && (op & OP_DO) == OP_DO)
         {
-            printf("[OP] %2x\n", op);
+            printf("[OP] %2X\n", op);
             switch (op)
             {
             case DO_STOP:
