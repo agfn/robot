@@ -4,13 +4,15 @@
 #include <unistd.h>
 #include <termios.h>
 #include <signal.h>
-
-#include <gpiod.h>
-
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
+#include <pthread.h>
+
+#include <gpiod.h>
+#include "protocol.h"
 
 
 /*
@@ -23,91 +25,163 @@ https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xsh_chap02.html#tag_22_
 */
 #define _XOPEN_SOURCE
 
-// ***
+////
+//
 // utils 
 #define set_bit(x, idx, val) \
     (x) = ~(~(x) | (1 << (idx))) | ((val) << (idx));
 #define get_bit(x, idx) \
     ((x) >> (idx) & 1)
-// ***
 
-// ***
-// hardware control 
-
-// gpio dev
-char gpio_dev[] = "/dev/gpiochip0";
-
-// need set for different platforms
-#define SET_GPIO(pin, val) \
-    gpiod_ctxless_set_value(gpio_dev, pin, val, NULL, NULL, NULL, NULL);
-
-// set manually
-#define M1_PIN_0    7       
-#define M1_PIN_1    8
-#define M2_PIN_0    23
-#define M2_PIN_1    24
-
-#define M_STOP      0
-#define M_FORARD    1
-#define M_BACK      2
-
-#define SET_M(MX, val) \
-    SET_GPIO(MX##_PIN_0, get_bit(val, 0)) \
-    SET_GPIO(MX##_PIN_1, get_bit(val, 1)) 
-// ***
-
-// ***
-// logic control
-#define OP_DO       0xC0
-#define DO_FORWARD  0xC0
-#define DO_BACK     0xC1
-#define DO_STOP     0xC2
-#define DO_LEFT     0xC3
-#define DO_RIGHT    0xC4
-// ***
-
-//// global vars
-//
-char dev[] = "/dev/ttyS0";
-int serial = -1;
-struct termios old_tio;
-
-int forward_back = 0;
-
-//// useful macros
-// 
 #define err_exit(condition, ...) \
     if (condition) \
     {              \
         printf(__VA_ARGS__); \
         exit(1);   \
     }
+//
 
-//// ctrl-c handler (stop program)
-// 
-void sec_exit(int num)
+
+
+////
+//
+// work mode flags
+int auto_mode = false;
+//
+
+
+
+////
+//
+// hardware control 
+
+// gpio global vars
+char gpio_dev[] = "/dev/gpiochip0";
+struct gpiod_chip * gchip = NULL;
+struct gpiod_line * glines[7] = {0};
+
+
+// uesd for monitor control 
+#define M1_PIN_0    13       
+#define M1_PIN_1    19
+#define M2_PIN_0    6
+#define M2_PIN_1    5
+
+// monitor control code
+#define M_STOP      0
+#define M_FORWARD   2
+#define M_BACK      1
+
+// used for auto control 
+#define WL_LEFT_PIN     20
+#define WL_RIGHT_PIN    16
+#define WL_FRONT_PIN    21
+
+#define WL_FRONT        1
+#define WL_LEFT         2
+#define WL_RIGHT        4
+
+// turn left(right) time 
+#define BTRC_MODE_TURN_TIME     70000
+#define AUTO_MODE_TURN_TIME     5000
+
+
+// initialize gpio input and output
+void init_gpio()
 {
-    if (serial >= 0)
+    int err = 0;
+
+    gchip = gpiod_chip_open(gpio_dev);
+    assert (gchip != NULL);
+    printf("[GCHIP]\n");
+
+    // open monitor control line
+    glines[0] = gpiod_chip_get_line(gchip, M1_PIN_0);
+    assert (glines[0] != NULL);
+    glines[1] = gpiod_chip_get_line(gchip, M1_PIN_1);
+    assert (glines[1] != NULL);
+    glines[2] = gpiod_chip_get_line(gchip, M2_PIN_0);
+    assert (glines[2] != NULL);
+    glines[3] = gpiod_chip_get_line(gchip, M2_PIN_1);
+    assert (glines[3] != NULL);
+
+    // setup monitor control (output)
+    for (int i = 0; i < 4; i++) 
     {
-        printf("\n[CLOSE] %s\n", dev);
-        tcsetattr(serial, TCSANOW, &old_tio);
-        close(serial);
+        err = gpiod_line_request_output(
+            glines[i], NULL, GPIOD_LINE_ACTIVE_STATE_LOW);
+        assert (err == 0);
     }
 
-    printf("[EXIT]\n");
-    exit(1);
+
+    // open input control line
+    glines[4] = gpiod_chip_get_line(gchip, WL_FRONT_PIN);
+    assert (glines[4] != NULL);
+    glines[5] = gpiod_chip_get_line(gchip, WL_LEFT_PIN);
+    assert (glines[5] != NULL);
+    glines[6] = gpiod_chip_get_line(gchip, WL_RIGHT_PIN);
+    assert (glines[6] != NULL);
+
+    // setup input 
+    for (int i = 4; i < 7; i++) 
+    {
+        err = gpiod_line_request_input(
+            glines[i], NULL);
+        assert (err == 0);
+    }
 }
 
-void register_ctrl_c()
+// get input 
+int get_wl_input()
 {
-    struct sigaction sa_ctrl_c;
-    sa_ctrl_c.sa_sigaction = sec_exit;
+    int res = 0;
 
-    err_exit (sigaction(SIGINT, &sa_ctrl_c, NULL) < 0, "[SIG] error\n")
+    for (int i = 0; i < 3; i++) 
+    {
+        int val = gpiod_line_get_value(glines[4 + i]);
+        if (val == -1) 
+        {
+            printf("[GET_WL_INPUT] FAIL\n");
+            return 0;
+        }
+        if (val == 0) 
+            res |= (1 << i);
+    }
+    return res;
 }
 
+// set monitor state with monitor control code (M_STOP...)
+void set_m(int mx, int val)
+{
+    gpiod_line_set_value(
+        glines[mx * 2], get_bit(val, 0));
+    gpiod_line_set_value(
+        glines[mx * 2 + 1], get_bit(val, 1));
+}
+//
 
-//// test
+
+//// 
+//
+// serial global vars
+char dev[] = "/dev/ttyS0";
+int serial = -1;
+struct termios old_tio;
+
+int do_forward_back = DO_STOP;
+
+// initlize serial
+void init_serial()
+{
+    struct termios tios = {0};
+    // used for restore
+    tcgetattr(serial, &old_tio);
+
+    tios.c_cflag = B9600 | CS8 | CREAD ; 
+    
+    tcsetattr(serial, TCSANOW, &tios);
+}
+
 //
 void test_serial()
 {
@@ -124,56 +198,59 @@ void test_serial()
     }
     printf("[TEST READ] %s (%d)\n", buf, n_rw);
 }
-
-
-////
 //
-// initlize serial
-void init_serial()
-{
-    struct termios tios = {0};
-    // used for restore
-    tcgetattr(serial, &old_tio);
 
-    tios.c_cflag = B9600 | CS8 | CREAD ; 
-    
-    tcsetattr(serial, TCSANOW, &tios);
-}
 
-////  recv and do
-//
+
+////  
+// 
+// recv and do
 void set_fb(int fb)
 {
     if (fb == DO_FORWARD)
     {
-        printf("[FORWARD]\n");
-        forward_back = M_FORARD;
-        SET_M(M1, M_FORARD)
-        SET_M(M2, M_FORARD)
+        // printf("[FORWARD]\n");
+        do_forward_back = DO_FORWARD;
+        set_m(0, M_FORWARD);
+        set_m(1, M_FORWARD);
+    } else if(fb == DO_BACK) {
+        // printf("[BACK]\n");
+        do_forward_back = DO_BACK;
+        set_m(0, M_BACK);
+        set_m(1, M_BACK);
     } else {
-        printf("[BACK]\n");
-        forward_back = M_BACK;
-        SET_M(M1, M_BACK)
-        SET_M(M2, M_BACK)
+        if (do_forward_back == DO_FORWARD) 
+            set_fb(DO_BACK);
+        else if (do_forward_back == DO_BACK)
+            set_fb(DO_FORWARD);
+        usleep(100000);
+        do_forward_back = DO_STOP;
+        set_m(0, M_STOP);
+        set_m(1, M_STOP);
     }
 }
+
+
+int turn_time = BTRC_MODE_TURN_TIME;
 
 void set_direction(int direc)
 {
     if (direc == DO_LEFT) 
     {
-        printf("[LEFT]\n");
-        SET_M(M1, M_STOP)
-        usleep(100000);
-        SET_M(M1, forward_back)
+        // printf("[LEFT]\n");
+        set_m(0, M_BACK);
+        set_m(1, M_FORWARD);
+        usleep(turn_time);
+        set_fb(do_forward_back);
     } else {
-        printf("[RIGHT]\n");
-        SET_M(M2, M_STOP)
-        usleep(100000);
-        SET_M(M2, forward_back)
+        // printf("[RIGHT]\n");
+        set_m(1, M_BACK);
+        set_m(0, M_FORWARD);
+        usleep(turn_time);
+        set_fb(do_forward_back);
     } 
 }
-// ***
+//
 
 // handle loop
 void hanlde_recv_loop()
@@ -182,15 +259,31 @@ void hanlde_recv_loop()
     int n_read = 0;
     while ( (n_read = read(serial, &op, 1)) >= 0)
     {
-        if (n_read == 1 && (op & OP_DO) == OP_DO)
+        if (n_read == 1)
         {
             printf("[OP] %2X\n", op);
             switch (op)
             {
+            case MODE_AUTO_ON:
+                {
+                    auto_mode = true;
+                    turn_time = AUTO_MODE_TURN_TIME;
+                    printf("[AUTO] ON\n");
+                }
+                break;
+            case MODE_AUTO_OFF:
+                {
+                    auto_mode = false;
+                    turn_time = BTRC_MODE_TURN_TIME;
+                    set_fb(DO_STOP);
+                    printf("[AUTO] OFF\n");
+                }
+                break;
             case DO_STOP:
                 {
-                    SET_M(M1, M_STOP)
-                    SET_M(M2, M_STOP)
+                    auto_mode = false;
+                    turn_time = BTRC_MODE_TURN_TIME;
+                    set_fb(DO_STOP);
                 }
                 break;
             case DO_LEFT:
@@ -211,13 +304,91 @@ void hanlde_recv_loop()
     
 }
 
+void auto_mode_loop()
+{
+    printf("[AUTO_MODE_THREAD] START\n");
 
-//// main
+    while ( 1 )
+    {
+        if (auto_mode)
+        {
+            int op = get_wl_input();
+            // printf("[AUTO] %X\n", op);
+
+            if (op == 0) 
+            {
+                set_fb(DO_FORWARD);
+                continue;
+            }
+
+            if (op & WL_FRONT 
+                || ((op & WL_LEFT != 0) && (op & WL_RIGHT != 0)) ) 
+            {
+                set_fb(DO_STOP);
+                continue;
+            }
+
+            if (op & WL_LEFT) {
+                printf("[AUTO] TURN RIGHT\n");
+                set_direction(DO_RIGHT);
+            } else {
+                printf("[AUTO] TURN LEFT\n");
+                set_direction(DO_LEFT);
+            } 
+            
+            // auto_mode = false;
+        }
+    }
+    
+}
+
+void auto_mode_thread()
+{
+    pthread_t t_auto_mode;
+    int err = pthread_create(
+        &t_auto_mode, NULL, 
+        auto_mode_loop, NULL);
+    assert (err == 0);
+}
+
+
+//// 
+// 
+// ctrl-c handler (stop program)
+void sec_exit(int num)
+{
+    if (serial >= 0)
+    {
+        printf("\n[CLOSE] %s\n", dev);
+        tcsetattr(serial, TCSANOW, &old_tio);
+        close(serial);
+
+        gpiod_chip_close(gchip);
+        for (int i = 0; i < 4; i++)
+            gpiod_line_release(glines[i]);
+    }
+
+    printf("[EXIT]\n");
+    exit(1);
+}
+
+void register_ctrl_c()
+{
+    struct sigaction sa_ctrl_c;
+    sa_ctrl_c.sa_sigaction = sec_exit;
+
+    err_exit (sigaction(SIGINT, &sa_ctrl_c, NULL) < 0, "[SIG] error\n")
+}
 //
+
+
+//// 
+// 
+// main
 int main()
 {
-    // register ctrl-c
-    register_ctrl_c();
+    // 
+    init_gpio();
 
     // open dev 
     serial = open(dev, O_RDWR);
@@ -227,8 +398,13 @@ int main()
     // 
     init_serial();
 
+    // register ctrl-c
+    register_ctrl_c();
+
     // test
     test_serial();
+
+    auto_mode_thread();
 
     // handle 
     hanlde_recv_loop();
