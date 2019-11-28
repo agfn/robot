@@ -76,4 +76,25 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.446" />
 
+    <Button
+        android:id="@+id/stopbtn"
+        android:layout_width="89dp"
+        android:layout_height="37dp"
+        android:background="@color/colorAccent"
+        android:text="STOP"
+        android:textColor="@android:color/background_light"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="@+id/guideline2"
+        app:layout_constraintTop_toBottomOf="@+id/rightbtn"
+        app:layout_constraintVertical_bias="0.501" />
+
+    <Button
+        android:id="@+id/autobtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="AUTO"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/guideline"
+        app:layout_constraintTop_toBottomOf="@+id/leftbtn" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

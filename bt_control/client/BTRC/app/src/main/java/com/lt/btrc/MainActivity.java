@@ -27,10 +27,11 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothAdapter bta;
     private final static String MY_UUID = "00001101-0000-1000-8000-00805F9B34FB";
     private final static byte DO_FORWARD = (byte)0xC0,
-        DO_BACK = (byte)0xC1, DO_STOP = (byte)0xC2,
-        DO_LEFT = (byte)0xC3, DO_RIGHT = (byte)0xC4;
+            DO_BACK = (byte)0xC1, DO_STOP = (byte)0xC2,
+            DO_LEFT = (byte)0xC3, DO_RIGHT = (byte)0xC4,
+            MODE_AUTO_ON = (byte)0xD0;
     private BluetoothSocket btsock = null;
-    private Button leftbtn, rightbtn, forwardbtn, backbtn;
+    private Button leftbtn, rightbtn, forwardbtn, backbtn, stopbtn, autobtn;
     private OutputStream btos = null;
 
 
@@ -106,6 +107,8 @@ public class MainActivity extends AppCompatActivity {
         rightbtn = (Button)findViewById(R.id.rightbtn);
         forwardbtn = (Button)findViewById(R.id.forwardbtn);
         backbtn = (Button)findViewById(R.id.backbtn);
+        stopbtn = (Button)findViewById(R.id.stopbtn);
+        autobtn = (Button)findViewById(R.id.autobtn);
 
         leftbtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -135,6 +138,19 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        stopbtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (btsock != null) send(DO_STOP);
+            };
+        });
+
+        autobtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (btsock != null) send(MODE_AUTO_ON);
+            };
+        });
         //
         initBT();
     }
