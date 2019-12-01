@@ -47,8 +47,6 @@ https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xsh_chap02.html#tag_22_
 //
 // work mode flags
 int auto_mode = false;
-//
-
 
 
 ////
@@ -58,32 +56,34 @@ int auto_mode = false;
 // gpio global vars
 char gpio_dev[] = "/dev/gpiochip0";
 struct gpiod_chip * gchip = NULL;
-struct gpiod_line * glines[7] = {0};
+struct gpiod_line * glines[8] = {0};
 
 
-// uesd for monitor control 
+// uesd for motor control 
 #define M1_PIN_0    13       
 #define M1_PIN_1    19
 #define M2_PIN_0    6
 #define M2_PIN_1    5
 
-// monitor control code
+// motor control code
 #define M_STOP      0
 #define M_FORWARD   2
 #define M_BACK      1
 
 // used for auto control 
-#define WL_LEFT_PIN     20
-#define WL_RIGHT_PIN    16
-#define WL_FRONT_PIN    21
+#define IR_PIN1     12
+#define IR_PIN2     21
+#define IR_PIN3     20
+#define IR_PIN4     16
 
-#define WL_FRONT        1
-#define WL_LEFT         2
-#define WL_RIGHT        4
+#define IR_LEFT_GUESS       0b0001
+#define IR_LEFT             0b0010   
+#define IR_RIGHT            0b0100
+#define IR_RIGHT_GUESS      0b1000
 
-// turn left(right) time 
+// turn left/right delay time 
 #define BTRC_MODE_TURN_TIME     70000
-#define AUTO_MODE_TURN_TIME     5000
+#define AUTO_MODE_TURN_TIME     10000
 
 
 // initialize gpio input and output
@@ -115,15 +115,18 @@ void init_gpio()
 
 
     // open input control line
-    glines[4] = gpiod_chip_get_line(gchip, WL_FRONT_PIN);
+    glines[4] = gpiod_chip_get_line(gchip, IR_PIN1);
     assert (glines[4] != NULL);
-    glines[5] = gpiod_chip_get_line(gchip, WL_LEFT_PIN);
+    glines[5] = gpiod_chip_get_line(gchip, IR_PIN2);
     assert (glines[5] != NULL);
-    glines[6] = gpiod_chip_get_line(gchip, WL_RIGHT_PIN);
+    glines[6] = gpiod_chip_get_line(gchip, IR_PIN3);
     assert (glines[6] != NULL);
+    glines[7] = gpiod_chip_get_line(gchip, IR_PIN4);
+    assert (glines[7] != NULL);
+
 
     // setup input 
-    for (int i = 4; i < 7; i++) 
+    for (int i = 4; i < 8; i++) 
     {
         err = gpiod_line_request_input(
             glines[i], NULL);
@@ -131,12 +134,16 @@ void init_gpio()
     }
 }
 
-// get input 
-int get_wl_input()
+
+/*
+return current state of infrared sensors 
+(combination of IR_LEFT ...)
+*/
+int get_ir_input()
 {
     int res = 0;
 
-    for (int i = 0; i < 3; i++) 
+    for (int i = 0; i < 4; i++) 
     {
         int val = gpiod_line_get_value(glines[4 + i]);
         if (val == -1) 
@@ -150,7 +157,7 @@ int get_wl_input()
     return res;
 }
 
-// set monitor state with monitor control code (M_STOP...)
+// set motor state with motor control code (M_STOP...)
 void set_m(int mx, int val)
 {
     gpiod_line_set_value(
@@ -158,7 +165,6 @@ void set_m(int mx, int val)
     gpiod_line_set_value(
         glines[mx * 2 + 1], get_bit(val, 1));
 }
-//
 
 
 //// 
@@ -170,7 +176,7 @@ struct termios old_tio;
 
 int do_forward_back = DO_STOP;
 
-// initlize serial
+// set tty attr (baud...)
 void init_serial()
 {
     struct termios tios = {0};
@@ -182,7 +188,7 @@ void init_serial()
     tcsetattr(serial, TCSANOW, &tios);
 }
 
-//
+// test serial connection between bluetooth module and pi
 void test_serial()
 {
     char buf[] = "AT";
@@ -198,13 +204,12 @@ void test_serial()
     }
     printf("[TEST READ] %s (%d)\n", buf, n_rw);
 }
-//
 
 
 
 ////  
 // 
-// recv and do
+// let car forward or back, may stop
 void set_fb(int fb)
 {
     if (fb == DO_FORWARD)
@@ -233,6 +238,7 @@ void set_fb(int fb)
 
 int turn_time = BTRC_MODE_TURN_TIME;
 
+// let car turn left or right 
 void set_direction(int direc)
 {
     if (direc == DO_LEFT) 
@@ -250,7 +256,7 @@ void set_direction(int direc)
         set_fb(do_forward_back);
     } 
 }
-//
+
 
 // handle loop
 void hanlde_recv_loop()
@@ -304,6 +310,12 @@ void hanlde_recv_loop()
     
 }
 
+
+// IS BIT ZERO
+#define IBZ(op, mask) ( !((op) & mask) ) 
+
+#define ON_LINE(op) ( IBZ(op, IR_LEFT) || IBZ(op, IR_RIGHT) )
+
 void auto_mode_loop()
 {
     printf("[AUTO_MODE_THREAD] START\n");
@@ -312,31 +324,30 @@ void auto_mode_loop()
     {
         if (auto_mode)
         {
-            int op = get_wl_input();
-            // printf("[AUTO] %X\n", op);
-
-            if (op == 0) 
+            int op = get_ir_input();
+            /*
+            printf("[AUTO] LG L R RG : %d %d %d %d\n", \
+                get_bit(op, 0), get_bit(op, 1), 
+                get_bit(op, 2), get_bit(op, 3));
+            auto_mode = false;
+            */
+            if ( IBZ(op, IR_LEFT_GUESS) )
             {
-                set_fb(DO_FORWARD);
-                continue;
-            }
-
-            if (op & WL_FRONT 
-                || ((op & WL_LEFT != 0) && (op & WL_RIGHT != 0)) ) 
-            {
-                set_fb(DO_STOP);
-                continue;
-            }
-
-            if (op & WL_LEFT) {
-                printf("[AUTO] TURN RIGHT\n");
-                set_direction(DO_RIGHT);
-            } else {
                 printf("[AUTO] TURN LEFT\n");
-                set_direction(DO_LEFT);
-            } 
-            
-            // auto_mode = false;
+                set_m(0, M_BACK);
+                set_m(1, M_FORWARD);
+            } else if ( IBZ(op, IR_RIGHT_GUESS) ) {
+                printf("[AUTO] TURN RIGHT\n");
+                set_m(1, M_BACK);
+                set_m(0, M_FORWARD);
+            } else if (ON_LINE(op)){
+                printf("[AUTO] RUN\n");
+                set_m(1, M_FORWARD);
+                set_m(0, M_FORWARD);
+            }
+            usleep(500);
+            set_m(1, M_STOP);
+            set_m(0, M_STOP);
         }
     }
     
@@ -379,39 +390,29 @@ void register_ctrl_c()
 
     err_exit (sigaction(SIGINT, &sa_ctrl_c, NULL) < 0, "[SIG] error\n")
 }
-//
 
 
-//// 
-// 
-// main
+
 int main()
 {
-    // 
     init_gpio();
 
-    // open dev 
     serial = open(dev, O_RDWR);
     err_exit (serial < 0, "[OPEN] cannot open %s\n", dev)
     printf("[OPEN] %s\n", dev);
 
-    // 
     init_serial();
 
-    // register ctrl-c
     register_ctrl_c();
 
-    // test
     test_serial();
 
     auto_mode_thread();
 
-    // handle 
     hanlde_recv_loop();
 
     sleep(3);
 
-    // exit
     sec_exit(0);
 
     return 0;
