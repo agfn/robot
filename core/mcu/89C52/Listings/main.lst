@@ -1,0 +1,265 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              12/25/2019 14:57:49 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main
+                    -.lst) TABS(2) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+*** WARNING C500 IN LINE 1 OF main.c: LICENSE ERROR (R207(3): REGISTRY READ ERROR)
+
+   1          #include "config.h"
+   2          #include "protocol.h"
+   3          
+   4          
+   5          /* ************************
+   6            global control var
+   7             ************************ */
+   8          #define BT_MODE   1
+   9          #define AUTO_MODE 0
+  10          uchar mode = BT_MODE;
+  11          
+  12          
+  13          
+  14          /* ************************
+  15            PWM control motor speed
+  16             ************************ */
+  17          uchar left_motor_speed = 0;
+  18          uchar right_motor_speed = 0;
+  19          uchar PWM_T;
+  20          
+  21          void global_init()
+  22          {
+  23   1        ET0 = 1; // enable timer interrupt
+  24   1        EA = 1;  // 
+  25   1      }
+  26          
+  27          void pwm_timer_0_init()
+  28          {
+  29   1        TMOD |= 0x02;   // 8bit auto reload mode
+  30   1        TH0 = 0xA4;
+  31   1        TL0 = 0xA4;   // 100 us
+  32   1        TR0 = 1;    // enable timer 0
+  33   1      }
+  34          
+  35          /* timer 0 interrupt routine */
+  36          void timer_0_isr() interrupt 1 using 1
+  37          {
+  38   1        if (PWM_T == 255)
+  39   1        {
+  40   2          PWM_T = 0;
+  41   2        }
+  42   1        if (right_motor_speed >= PWM_T)
+  43   1        {
+  44   2          right_motor_ea = 1;
+  45   2        }
+  46   1        if (left_motor_speed >= PWM_T)
+  47   1        {
+  48   2          left_motor_ea = 1;
+  49   2        }
+  50   1        if (left_motor_speed < PWM_T)
+  51   1        {
+  52   2          left_motor_ea = 0;
+  53   2        }
+C51 COMPILER V9.60.0.0   MAIN                                                              12/25/2019 14:57:49 PAGE 2   
+
+  54   1        if (right_motor_speed < PWM_T)
+  55   1        {
+  56   2          right_motor_ea = 0;
+  57   2        }
+  58   1        PWM_T++;
+  59   1      }
+  60          
+  61          /* ******************
+  62            delay 
+  63             ****************** */
+  64          void delay(int ms)
+  65          {
+  66   1        unsigned char i, j;
+  67   1        while (ms-- != 0)
+  68   1        {
+  69   2          _nop_();
+  70   2          _nop_();
+  71   2          _nop_();
+  72   2          i = 11;
+  73   2          j = 190;
+  74   2          do
+  75   2          {
+  76   3            while (--j);
+  77   3          } while (--i);
+  78   2        }
+  79   1      }
+  80          
+  81          
+  82          /* ******************
+  83            car control
+  84             ****************** */
+  85          void car_go(uchar left_speed, uchar right_speed)
+  86          {
+  87   1        left_motor_speed = left_speed;
+  88   1        right_motor_speed = right_speed;
+  89   1        left_motor_go;
+  90   1        right_motor_go;
+  91   1      }
+  92          
+  93          void car_back(uchar left_speed, uchar right_speed)
+  94          {
+  95   1        left_motor_speed = left_speed;
+  96   1        right_motor_speed = right_speed;
+  97   1        left_motor_back;
+  98   1        right_motor_back;
+  99   1      }
+ 100          
+ 101          void car_stop()
+ 102          {
+ 103   1        left_motor_stop;
+ 104   1        right_motor_stop;
+ 105   1      }
+ 106          
+ 107          void turn_left(uchar left_speed, uchar right_speed)
+ 108          {
+ 109   1        left_motor_speed = left_speed;
+ 110   1        right_motor_speed = right_speed;  
+ 111   1        left_motor_stop;  
+ 112   1        right_motor_go;
+ 113   1      }
+ 114          
+ 115          void turn_right(uchar left_speed, uchar right_speed)
+C51 COMPILER V9.60.0.0   MAIN                                                              12/25/2019 14:57:49 PAGE 3   
+
+ 116          {
+ 117   1        left_motor_speed = left_speed;
+ 118   1        right_motor_speed = right_speed;  
+ 119   1        left_motor_go;
+ 120   1        right_motor_stop;
+ 121   1      }
+ 122          
+ 123          
+ 124          /* *****************
+ 125            bluetooth remote control
+ 126             ***************** */
+ 127          void serial_timer_1_init()
+ 128          {
+ 129   1        /* enable timer 1 as baud */ 
+ 130   1        TMOD |= 0x20;   // 8bit auto reload mode
+ 131   1        TH1 = -3;
+ 132   1        TL1 = -3;     // 9600 baud
+ 133   1        TR1 = 1;    // enable timer 1
+ 134   1      
+ 135   1        /* enable serial */
+ 136   1        SCON = 0x52; 
+ 137   1      }
+ 138          
+ 139          void bt_send(uchar byte)
+ 140          {
+ 141   1        SBUF = byte;
+ 142   1        while (!TI) ;
+ 143   1        TI = 0;
+ 144   1      }
+ 145          
+ 146          uchar bt_recv()
+ 147          {
+ 148   1        uchar byte = 0;
+ 149   1        while (!RI) ;
+ 150   1        byte = SBUF;
+ 151   1        RI = 0;
+ 152   1        return byte;
+ 153   1      }
+ 154          
+ 155          uchar user_set_left_speed = 100;
+ 156          uchar user_set_right_speed = 100;
+ 157          
+ 158          /* *****************
+ 159            line tracking 
+ 160             ***************** */
+ 161          void tracking()
+ 162          {
+ 163   1        if ((left_sensor == 1) && (right_sensor == 1))
+ 164   1        { 
+ 165   2          car_go(user_set_left_speed, user_set_right_speed);
+ 166   2        } else if ((left_sensor == 0) && (right_sensor == 1))
+ 167   1        {
+ 168   2          turn_right(255, user_set_right_speed);
+ 169   2        } else if ((left_sensor == 1) && (right_sensor == 0))
+ 170   1        {
+ 171   2          turn_left(user_set_left_speed, 255);
+ 172   2        }
+ 173   1      }
+ 174          
+ 175          
+ 176          void main()
+ 177          {
+C51 COMPILER V9.60.0.0   MAIN                                                              12/25/2019 14:57:49 PAGE 4   
+
+ 178   1        global_init();
+ 179   1        pwm_timer_0_init();
+ 180   1        serial_timer_1_init();
+ 181   1      
+ 182   1        // set speed 
+ 183   1        user_set_left_speed = 100;
+ 184   1        user_set_left_speed = 100;
+ 185   1      
+ 186   1        P1 = 0;
+ 187   1        
+ 188   1        /* application  loop */ 
+ 189   1        while (1)
+ 190   1        {
+ 191   2          uchar op = 0;
+ 192   2          // recieve opcode
+ 193   2          if (RI) op = bt_recv();
+ 194   2        
+ 195   2          if (op == MODE_SWITCH)
+ 196   2          {
+ 197   3            mode = !mode;
+ 198   3            if (mode == BT_MODE)
+ 199   3              car_stop();
+ 200   3          } 
+ 201   2      
+ 202   2          if (mode == AUTO_MODE)
+ 203   2            tracking();
+ 204   2        
+ 205   2          if (op != 0)
+ 206   2          {
+ 207   3            switch (op)
+ 208   3            {
+ 209   4            case DO_FORWARD:
+ 210   4              car_go(left_motor_speed, right_motor_speed);
+ 211   4              break;
+ 212   4            case DO_BACK:
+ 213   4              car_back(left_motor_speed, right_motor_speed);
+ 214   4              break;
+ 215   4            case DO_STOP:
+ 216   4              car_stop();
+ 217   4              break;
+ 218   4            case DO_LEFT:
+ 219   4              turn_left(left_motor_speed, 255);
+ 220   4              break;
+ 221   4            case DO_RIGHT:
+ 222   4              turn_right(255, right_motor_speed);
+ 223   4              break;
+ 224   4            default:
+ 225   4              break;
+ 226   4            }
+ 227   3            delay(20);
+ 228   3            car_stop();
+ 229   3          }
+ 230   2        }
+ 231   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    363    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      6       1
+C51 COMPILER V9.60.0.0   MAIN                                                              12/25/2019 14:57:49 PAGE 5   
+
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  1 WARNING(S),  0 ERROR(S)
